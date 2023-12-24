@@ -2,7 +2,7 @@ from datetime import datetime, timedelta
 from typing import Annotated
 from fastapi import FastAPI, HTTPException, Response, status
 from fastapi.params import Depends
-from pydantic import BaseModel, Field, FileUrl, JsonValue
+from pydantic import BaseModel, Field, FileUrl, JsonValue, model_validator
 
 from .types import (
     Credentials,
@@ -49,43 +49,65 @@ class CreateGraphInput(BaseModel):
 def create_graph(
     input: CreateGraphInput, db_session: db.Session = Depends(get_db_session)
 ) -> SimpleGraph:
-    db_graph = db.Graphs(name=input.graph_name)
     with db_session.begin():
+        db_graph = db.Graphs(name=input.graph_name)
         db_session.add(db_graph)
+        db_session.flush()
+        sgraph = SimpleGraph(name=db_graph.name, uuid=str(db_graph.id))
 
-    return SimpleGraph(name=db_graph.name, uuid=str(db_graph.id))
+    return sgraph
 
 
-# --- unused in src code
-class GetGraphByNameInput(BaseModel):
-    graph_name: str = Field(validation_alias="GraphName")
+class GetGraphByNameOrUIIDInput(BaseModel):
+    graph_name: str | None = Field(None, validation_alias="GraphName")
+    graph_uuid: str | None = Field(None, validation_alias="GraphUUID")
+
+    @model_validator(mode="after")
+    def check_name_or_uuid(self):
+        if not (bool(self.graph_name) ^ bool(self.graph_uuid)):
+            raise ValueError("either name or uuid is required but not both")
+        return self
 
 
 @app.post("/get_graph")
-def get_graph_by_name(input: GetGraphByNameInput) -> Graph:
-    return
+def get_graph_by_name_or_uuid(
+    input: GetGraphByNameOrUIIDInput,
+    db_session: db.Session = Depends(get_db_session),
+) -> Graph:
+    """unused in src code"""
+    filter_by = {}
+    if input.graph_name:
+        filter_by["name"] = input.graph_name
+    if input.graph_uuid:
+        filter_by["id"] = input.graph_uuid
 
+    with db_session.begin():
+        db_graph = db_session.query(db.Graphs).filter_by(**filter_by).one_or_none()
+        graph = (
+            Graph(
+                name=db_graph.name,
+                uuid=str(db_graph.id),
+                txid=db_graph.current_txid,
+                storage_usage=1313,
+                storage_limit=4242,
+            )
+            if db_graph
+            else None
+        )
 
-class GetGraphByUUIDInput(BaseModel):
-    graph_uuid: str = Field(validation_alias="GraphUUID")
+    if not graph:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
 
-
-@app.post("/get_graph")
-def get_graph_by_uuid(input: GetGraphByUUIDInput) -> Graph:
-    return
-
-
-# --- end
+    return graph
 
 
 class DeleteGraphInput(BaseModel):
     graph_uuid: str = Field(validation_alias="GraphUUID")
 
 
-@app.post("/delete_graph", status_code=status.HTTP_204_NO_CONTENT)
+@app.post("/delete_graph", status_code=status.HTTP_200_OK)
 def delete_graph(
     input: DeleteGraphInput,
-    response: Response,
     db_session: db.Session = Depends(get_db_session),
 ):
     """returns 2xx if deletion went ok"""
@@ -95,12 +117,60 @@ def delete_graph(
             db_session.query(db.Graphs).filter_by(id=input.graph_uuid).one_or_none()
         )
 
-    if not db_graph:
-        response.status_code = status.HTTP_404_NOT_FOUND
-        return
+        if not db_graph:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+
+        db_session.delete(db_graph)
+
+
+class GetGraphTxidInput(BaseModel):
+    graph_uuid: str = Field(validation_alias="GraphUUID")
+
+
+class GetGraphTxidOutput(BaseModel):
+    txid: TxId
+
+
+@app.post("/get_txid")
+def get_graph_txid(
+    input: GetGraphTxidInput,
+    db_session: db.Session = Depends(get_db_session),
+) -> GetGraphTxidOutput:
+    """returns the latest txid of the graph"""
 
     with db_session.begin():
-        db_session.delete(db_graph)
+        db_graph = (
+            db_session.query(db.Graphs).filter_by(id=input.graph_uuid).one_or_none()
+        )
+
+        if not db_graph:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+
+        current_txid = db_graph.current_txid
+
+    return GetGraphTxidOutput(txid=current_txid)
+
+
+class ListGraphsOutput(BaseModel):
+    graphs: list[Graph] = Field(serialization_alias="Graphs")
+
+
+@app.post("/list_graphs")
+def list_graphs(db_session: db.Session = Depends(get_db_session)) -> ListGraphsOutput:
+    with db_session.begin():
+        db_graphs = db_session.query(db.Graphs).all()
+        graphs = [
+            Graph(
+                name=dbg.name,
+                uuid=str(dbg.id),
+                txid=dbg.current_txid,
+                storage_usage=1313,
+                storage_limit=4242,
+            )
+            for dbg in db_graphs
+        ]
+
+    return ListGraphsOutput(graphs=graphs)
 
 
 class GetGraphSaltInput(BaseModel):
@@ -124,11 +194,14 @@ def get_graph_salt(
             .filter_by(graph_id=input.graph_uuid)
             .one_or_none()
         )
+        graph_salt = (
+            GraphSalt.model_validate(db_graph_salt, from_attributes=True)
+            if db_graph_salt
+            else None
+        )
 
-    if db_graph_salt:
-        graph_salt = GraphSalt.model_validate(db_graph_salt)
-        if not graph_salt.is_expired:
-            return graph_salt
+    if graph_salt and not graph_salt.is_expired:
+        return graph_salt
 
     # needs rotation
     response.status_code = status.HTTP_410_GONE
@@ -168,12 +241,15 @@ def create_graph_salt(
             .filter_by(graph_id=input.graph_uuid)
             .one_or_none()
         )
+        graph_salt = (
+            GraphSalt.model_validate(db_graph_salt, from_attributes=True)
+            if db_graph_salt
+            else None
+        )
 
-    if db_graph_salt:
-        graph_salt = GraphSalt.model_validate(db_graph_salt)
-        if not graph_salt.is_expired:
-            response.status_code = status.HTTP_409_CONFLICT
-            return graph_salt
+    if graph_salt and not graph_salt.is_expired:
+        response.status_code = status.HTTP_409_CONFLICT
+        return graph_salt
 
     graph_salt = GraphSalt.create_random()
 
@@ -206,21 +282,33 @@ def get_graph_encrypt_keys(
             .filter_by(graph_id=input.graph_uuid)
             .one_or_none()
         )
+        graph_enckeys = (
+            GraphEncryptKeys.model_validate(db_graph_enckeys, from_attributes=True)
+            if db_graph_enckeys
+            else None
+        )
 
-    if not db_graph_enckeys:
+    if not graph_enckeys:
         raise HTTPException(status_code=404)
 
-    return GraphEncryptKeys.model_validate(db_graph_enckeys)
+    return graph_enckeys
 
 
-class UploadGraphEncryptKeysInput(GraphEncryptKeys):
+class UploadGraphEncryptKeysInput(BaseModel):
     graph_uuid: str = Field(validation_alias="GraphUUID")
+    public_key: Annotated[
+        GraphEncryptKeys.__annotations__["public_key"],
+        Field(validation_alias="public-key"),
+    ]
+    encrypted_private_key: Annotated[
+        GraphEncryptKeys.__annotations__["encrypted_private_key"],
+        Field(validation_alias="encrypted-private-key"),
+    ]
 
 
 @app.post("/upload_graph_encrypt_keys", status_code=status.HTTP_201_CREATED)
 def upload_graph_encrypt_keys(
     input: UploadGraphEncryptKeysInput,
-    response: Response,
     db_session: db.Session = Depends(get_db_session),
 ):
     """return 2xx with no body"""
@@ -233,8 +321,7 @@ def upload_graph_encrypt_keys(
         )
 
     if db_graph_enckeys:
-        response.status_code = status.HTTP_409_CONFLICT
-        return
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT)
 
     with db_session.begin():
         db_session.add(
@@ -244,57 +331,6 @@ def upload_graph_encrypt_keys(
                 encrypted_private_key=input.encrypted_private_key,
             )
         )
-
-
-class GetGraphTxidInput(BaseModel):
-    graph_uuid: str = Field(validation_alias="GraphUUID")
-
-
-class GetGraphTxidOutput(BaseModel):
-    txid: TxId
-
-
-@app.post("/get_txid")
-def get_graph_txid(
-    input: GetGraphTxidInput,
-    response: Response,
-    db_session: db.Session = Depends(get_db_session),
-) -> GetGraphTxidOutput:
-    """returns the latest txid of the graph"""
-
-    with db_session.begin():
-        db_graph = (
-            db_session.query(db.Graphs).filter_by(id=input.graph_uuid).one_or_none()
-        )
-
-    if not db_graph:
-        response.status_code = status.HTTP_404_NOT_FOUND
-        return
-
-    return GetGraphTxidOutput(txid=db_graph.current_txid)
-
-
-class ListGraphsOutput(BaseModel):
-    graphs: list[Graph] = Field(serialization_alias="Graphs")
-
-
-@app.post("/list_graphs")
-def list_graphs(db_session: db.Session = Depends(get_db_session)) -> ListGraphsOutput:
-    with db_session.begin():
-        db_graphs = db_session.query(db.Graphs).all()
-
-    return ListGraphsOutput(
-        graphs=[
-            Graph(
-                name=dbg.name,
-                uuid=dbg.id,
-                txid=dbg.current_txid,
-                storage_usage=1313,
-                storage_limit=4242,
-            )
-            for dbg in db_graphs
-        ]
-    )
 
 
 class GetAllFilesInput(BaseModel):

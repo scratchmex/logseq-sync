@@ -1,7 +1,7 @@
+from contextlib import contextmanager
 from datetime import datetime
 from sqlalchemy import Column, ForeignKey, create_engine, schema, sql, types
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker, Session
+from sqlalchemy.orm import sessionmaker, Session, declarative_base
 
 
 SQLALCHEMY_DATABASE_URL = "sqlite:///./db.sqlite"
@@ -10,7 +10,9 @@ SQLALCHEMY_DATABASE_URL = "sqlite:///./db.sqlite"
 engine = create_engine(
     SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False}
 )
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+SessionLocal = sessionmaker(
+    autocommit=False, autoflush=False, autobegin=False, bind=engine
+)
 Base = declarative_base()
 
 
@@ -25,7 +27,8 @@ class Graphs(Base):
 class GraphSalts(Base):
     __tablename__ = "graph_salts"
 
-    graph_id = Column(ForeignKey("graphs.id", ondelete="CASCADE"), primary_key=True)
+    id = Column(types.Integer(), primary_key=True)
+    graph_id = Column(ForeignKey("graphs.id", ondelete="CASCADE"))
     value = Column(types.String(), nullable=False)
     expires_at = Column(types.DateTime(), nullable=False)
 
@@ -88,6 +91,9 @@ def get_db_session():
         yield session
     finally:
         session.close()
+
+
+db_session = contextmanager(get_db_session)
 
 
 create_database_tables()
