@@ -1,7 +1,10 @@
+import base64
+import hashlib
+import secrets
 from typing import Annotated, Literal
 
-from datetime import datetime
-from pydantic import BaseModel, Field
+from datetime import datetime, timedelta
+from pydantic import BaseModel, ConfigDict, Field, computed_field
 
 
 TxId = Annotated[int, Field(serialization_alias="TXId", ge=0)]
@@ -28,10 +31,23 @@ class SimpleGraph(BaseModel):
 
 
 class GraphSalt(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     value: str = Field(description="64-byte base64 salt")
-    expired_at: int = Field(
+    expires_at: datetime = Field(
         serialization_alias="expired-at", description="unix timestamp milliseconds"
     )
+
+    @classmethod
+    def create_random(cls):
+        return cls(
+            value=base64.b64encode(secrets.token_bytes(64)),
+            expires_at=datetime.utcnow() + timedelta(weeks=8),
+        )
+
+    @property
+    def is_expired(self):
+        return self.expires_at <= datetime.utcnow()
 
 
 class GraphEncryptKeys(BaseModel):
@@ -69,10 +85,18 @@ class Transaction(BaseModel):
 
 
 class FileObject(BaseModel):
-    etag: str = Field(serialization_alias="ETag")
     key: FileRemoteId = Field(serialization_alias="Key")
     last_modified: datetime = Field(serialization_alias="LastModified")  # utc
     size: int = Field(serialization_alias="Size")
+
+    @computed_field(alias="ETag")
+    @property
+    def etag(self) -> str:
+        digest = hashlib.md5()
+        digest.update(bytes(self.last_modified.isoformat()))
+        digest.update(self.size.to_bytes())
+
+        return f"md5-id-{digest.hexdigest()}"
 
 
 class FileVersion(BaseModel):

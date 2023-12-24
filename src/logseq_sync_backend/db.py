@@ -1,7 +1,8 @@
 from datetime import datetime
 from sqlalchemy import Column, ForeignKey, create_engine, schema, sql, types
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import sessionmaker, Session
+
 
 SQLALCHEMY_DATABASE_URL = "sqlite:///./db.sqlite"
 # SQLALCHEMY_DATABASE_URL = "postgresql://user:password@postgresserver/db"
@@ -17,8 +18,8 @@ class Graphs(Base):
     __tablename__ = "graphs"
 
     id = Column(types.Integer(), primary_key=True)
-    name = Column(types.String(), nullable=False)
-    current_txid = Column(types.Integer(), nullable=False)
+    name = Column(types.String(), nullable=False, unique=True)
+    current_txid = Column(types.Integer(), nullable=False, default=0)
 
 
 class GraphSalts(Base):
@@ -45,6 +46,8 @@ class Transactions(Base):
     txid = Column(types.Integer(), nullable=False)
     type = Column(types.String(), nullable=False)
 
+    created_at = Column(types.DateTime(), default=datetime.utcnow)
+
 
 class TransactionContent(Base):
     __tablename__ = "transactions_content"
@@ -59,7 +62,7 @@ class FilesMetadata(Base):
     __tablename__ = "files_metadata"
 
     graph_id = Column(ForeignKey("graphs.id", ondelete="CASCADE"), primary_key=True)
-    file_id = Column(types.String(), primary_key=True)
+    file_id = Column(types.Integer(), primary_key=True)
     last_modified = Column(types.DateTime(), nullable=False)
     size = Column(types.Integer(), nullable=False)
 
@@ -67,10 +70,12 @@ class FilesMetadata(Base):
 class FilesVersions(Base):
     __tablename__ = "files_versions"
 
-    file_id = Column(types.String(), primary_key=True)
-    version_id = Column(types.String(), primary_key=True)
+    file_id = Column(
+        ForeignKey("files_metadata.file_id", ondelete="CASCADE"), primary_key=True
+    )
+    version_id = Column(types.Integer(), primary_key=True)
 
-    create_time = Column(types.DateTime(), nullable=False, default=datetime.utcnow)
+    created_at = Column(types.DateTime(), nullable=False, default=datetime.utcnow)
 
 
 def create_database_tables():
