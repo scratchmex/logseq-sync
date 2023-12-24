@@ -41,6 +41,25 @@ def user_info() -> UserInfo:
     )
 
 
+@app.post("/get_temp_credential")
+def get_temp_credential() -> TempCredential:
+    """get temp credentials for uploading transactions
+
+    aka upload file transaction
+
+    used by rsapi refresh_temp_credential
+    """
+    # TODO: integrate s3 backend
+    return TempCredential(
+        credentials=Credentials(
+            access_key_id="access-key-id-xxx",
+            expiration=datetime.utcnow() + timedelta(days=7),
+            secret_key="secret-key-xxx",
+            session_token="session-token-xxx",
+        )
+    )
+
+
 class CreateGraphInput(BaseModel):
     graph_name: str = Field(validation_alias="GraphName")
 
@@ -333,6 +352,108 @@ def upload_graph_encrypt_keys(
         )
 
 
+class UpdateFilesInput(BaseModel):
+    graph_uuid: str = Field(validation_alias="GraphUUID")
+    txid: TxId
+    files: dict[FileRemoteId, tuple[str, str]] = Field(
+        validation_alias="Files",
+        description="{ FileRemoteId: (TempRemotePath, MD5Checksum) }",
+        # { "encrypted_file_path": ("s3-prefix/<random>", "md5-checksum") }
+    )
+
+
+class UpdateFilesOutput(BaseModel):
+    message: str | None = None
+    txid: TxId
+    suc_files: list[FileRemoteId] = Field(serialization_alias="UpdateSuccFiles")
+    fail_files: dict[FileRemoteId, str] = Field(serialization_alias="UpdateFailedFiles")
+    # ^^ {"fileremoteid": "idk"} TODO
+
+
+@app.post("/update_files")
+def update_files(
+    input: UpdateFilesInput,
+    response: Response,
+    db_session: db.Session = Depends(get_db_session),
+) -> UpdateFilesOutput:
+    """move temp uploaded files into their permanent location
+
+    aka commit file transaction
+
+    main flow is in rsapi/update_remote_files
+
+    Theoretically, the flow here is something like:
+        1. calls get_temp_credential in refresh_temp_credential if needed
+        2. calls upload_tempfile which PUTs some arbitrary number files to that location
+            - this seems like an attack vector, but a short expiration should mitigate?
+        3. calls this endpoint via update_files(encrypted_file_path, remote_temp_url, md5checksum)
+        4. we move those files into their permanent locations by making a Transaction
+
+    ref: https://github.com/bcspragu/logseq-sync
+    """
+
+    with db_session.begin():
+        db_graph = (
+            db_session.query(db.Graphs).filter_by(id=input.graph_uuid).one_or_none()
+        )
+
+    if not db_graph:
+        response.status_code = status.HTTP_404_NOT_FOUND
+        return {"message": "graph not found"}
+
+    if db_graph.current_txid > input.txid:
+        response.status_code = status.HTTP_410_GONE
+        return {"message": "outdated txn id"}
+
+    db_txn = db_session.begin()
+    transaction = db.Transactions(graph_id=input.graph_uuid, type="update_files")
+
+    suc_files = []
+    fail_files = {}
+    for fileid, (tmp_remote_path, md5_checksum) in input.files.items():
+        # TODO: integrate s3 backend
+        """
+        remote_checksum = s3_get_checksum(tmp_remote_path)
+        if remote_checksum != md5_checksum:
+            fail_files[fileid] = "md5 checksum mismatch"
+            continue
+
+        remote_size = s3_get_size(tmp_remote_path)
+
+        s3_move(tmp_remote_path, fileid)
+        """
+
+        file_version = db.FilesVersions(file_id=fileid)
+        transaction_content = db.TransactionContent(
+            txn_id=transaction.id,
+            to_path=fileid,
+            from_path=tmp_remote_path,
+            checksum=md5_checksum,
+        )
+        file_metadata = db.FilesMetadata(
+            graph_id=input.graph_uuid,
+            file_id=fileid,
+            last_modified=file_version.created_at,
+            size=4242,
+        )
+
+        db_session.add_all([file_version, transaction_content, file_metadata])
+
+        suc_files.append(fileid)
+
+    if suc_files:
+        db_graph.current_txid += 1
+        transaction.txid = db_graph.current_txid
+        db_session.add(db_graph)
+        db_txn.close()
+    else:
+        db_txn.rollback()
+
+    return UpdateFilesOutput(
+        txid=db_graph.current_txid, suc_files=suc_files, fail_files=fail_files
+    )
+
+
 class GetAllFilesInput(BaseModel):
     graph_uuid: str = Field(validation_alias="GraphUUID")
     # ContinuationToken: pagination cursor, first is None
@@ -531,127 +652,6 @@ def get_version_files(
             dbvf.file_id: f"presigned-url/version-files/{dbvf.file_id}/{dbvf.version_id}"
             for dbvf in db_graph_version_files
         }
-    )
-
-
-@app.post("/get_temp_credential")
-def get_temp_credential() -> TempCredential:
-    """get temp credentials for uploading transactions
-
-    aka upload file transaction
-
-    used by rsapi refresh_temp_credential
-    """
-    # TODO: integrate s3 backend
-    return TempCredential(
-        credentials=Credentials(
-            access_key_id="access-key-id-xxx",
-            expiration=datetime.utcnow() + timedelta(days=7),
-            secret_key="secret-key-xxx",
-            session_token="session-token-xxx",
-        )
-    )
-
-
-class UpdateFilesInput(BaseModel):
-    graph_uuid: str = Field(validation_alias="GraphUUID")
-    txid: TxId
-    files: dict[FileRemoteId, tuple[str, str]] = Field(
-        validation_alias="Files",
-        description="{ FileRemoteId: (TempRemotePath, MD5Checksum) }",
-        # { "encrypted_file_path": ("s3-prefix/<random>", "md5-checksum") }
-    )
-
-
-class UpdateFilesOutput(BaseModel):
-    message: str | None = None
-    txid: TxId
-    suc_files: list[FileRemoteId] = Field(serialization_alias="UpdateSuccFiles")
-    fail_files: dict[FileRemoteId, str] = Field(serialization_alias="UpdateFailedFiles")
-    # ^^ {"fileremoteid": "idk"} TODO
-
-
-@app.post("/update_files")
-def update_files(
-    input: UpdateFilesInput,
-    response: Response,
-    db_session: db.Session = Depends(get_db_session),
-) -> UpdateFilesOutput:
-    """move temp uploaded files into their permanent location
-
-    aka commit file transaction
-
-    main flow is in rsapi/update_remote_files
-
-    Theoretically, the flow here is something like:
-        1. calls get_temp_credential in refresh_temp_credential if needed
-        2. calls upload_tempfile which PUTs some arbitrary number files to that location
-            - this seems like an attack vector, but a short expiration should mitigate?
-        3. calls this endpoint via update_files(encrypted_file_path, remote_temp_url, md5checksum)
-        4. we move those files into their permanent locations by making a Transaction
-
-    ref: https://github.com/bcspragu/logseq-sync
-    """
-
-    with db_session.begin():
-        db_graph = (
-            db_session.query(db.Graphs).filter_by(id=input.graph_uuid).one_or_none()
-        )
-
-    if not db_graph:
-        response.status_code = status.HTTP_404_NOT_FOUND
-        return {"message": "graph not found"}
-
-    if db_graph.current_txid > input.txid:
-        response.status_code = status.HTTP_410_GONE
-        return {"message": "outdated txn id"}
-
-    db_txn = db_session.begin()
-    transaction = db.Transactions(graph_id=input.graph_uuid, type="update_files")
-
-    suc_files = []
-    fail_files = {}
-    for fileid, (tmp_remote_path, md5_checksum) in input.files.items():
-        # TODO: integrate s3 backend
-        """
-        remote_checksum = s3_get_checksum(tmp_remote_path)
-        if remote_checksum != md5_checksum:
-            fail_files[fileid] = "md5 checksum mismatch"
-            continue
-
-        remote_size = s3_get_size(tmp_remote_path)
-
-        s3_move(tmp_remote_path, fileid)
-        """
-
-        file_version = db.FilesVersions(file_id=fileid)
-        transaction_content = db.TransactionContent(
-            txn_id=transaction.id,
-            to_path=fileid,
-            from_path=tmp_remote_path,
-            checksum=md5_checksum,
-        )
-        file_metadata = db.FilesMetadata(
-            graph_id=input.graph_uuid,
-            file_id=fileid,
-            last_modified=file_version.created_at,
-            size=4242,
-        )
-
-        db_session.add_all([file_version, transaction_content, file_metadata])
-
-        suc_files.append(fileid)
-
-    if suc_files:
-        db_graph.current_txid += 1
-        transaction.txid = db_graph.current_txid
-        db_session.add(db_graph)
-        db_txn.close()
-    else:
-        db_txn.rollback()
-
-    return UpdateFilesOutput(
-        txid=db_graph.current_txid, suc_files=suc_files, fail_files=fail_files
     )
 
 
