@@ -13,7 +13,7 @@ FileId = Annotated[
 FileRemoteId = Annotated[
     str,
     Field(
-        description="file remote id is the s3 file path. e.g. 's3-prefix/xxxxxxxxxxx'"
+        description="file remote id is the s3 file path (encrypted). e.g. 's3-prefix/xxxxxxxxxxx'"
     ),
 ]
 
@@ -33,7 +33,7 @@ class SimpleGraph(BaseModel):
 
 class FileObject(BaseModel):
     etag: str = Field(serialization_alias="ETag")
-    key: FileId = Field(serialization_alias="Key")
+    key: FileRemoteId = Field(serialization_alias="Key")
     last_modified: datetime = Field(serialization_alias="LastModified")  # utc
     size: int = Field(serialization_alias="Size")
 
@@ -64,6 +64,11 @@ class CreateGraphInput(BaseModel):
     graph_name: str = Field(validation_alias="GraphName")
 
 
+@app.post("/user_info")
+def user_info():
+    pass
+
+
 @app.post("/create_graph")
 def create_graph(input: CreateGraphInput) -> Graph:
     return
@@ -87,6 +92,95 @@ def get_graph_by_uuid(input: GetGraphByUUIDInput) -> Graph:
     return
 
 
+class DeleteGraphInput(BaseModel):
+    graph_uuid: str = Field(validation_alias="GraphUUID")
+
+
+# TODO
+class DeleteGraphOutput(BaseModel):
+    pass
+
+
+@app.post("/delete_graph")
+def delete_graph(input: DeleteGraphInput) -> DeleteGraphOutput:
+    pass
+
+
+class GetGraphSaltInput(BaseModel):
+    graph_uuid: str = Field(validation_alias="GraphUUID")
+
+
+# TODO
+class GetGraphSaltOutput(BaseModel):
+    pass
+
+
+@app.post("/get_graph_salt")
+def get_graph_salt(input: GetGraphSaltInput) -> GetGraphSaltOutput:
+    pass
+
+
+class CreateGraphSaltInput(BaseModel):
+    graph_uuid: str = Field(validation_alias="GraphUUID")
+
+
+# TODO
+class CreateGraphSaltOutput(BaseModel):
+    pass
+
+
+@app.post("/create_graph_salt")
+def create_graph_salt(input: CreateGraphSaltInput) -> CreateGraphSaltOutput:
+    pass
+
+
+class GetGraphEncryptKeysInput(BaseModel):
+    graph_uuid: str = Field(validation_alias="GraphUUID")
+
+
+# TODO
+class GetGraphEncryptKeysOutput(BaseModel):
+    pass
+
+
+@app.post("/get_graph_encrypt_keys")
+def get_graph_encrypt_keys(
+    input: GetGraphEncryptKeysInput,
+) -> GetGraphEncryptKeysOutput:
+    pass
+
+
+class UploadGraphEncryptKeysInput(BaseModel):
+    graph_uuid: str = Field(validation_alias="GraphUUID")
+    public_key: str = Field(validation_alias="public-key")
+    encrypted_private_key: str = Field(validation_alias="encrypted-private-key")
+
+
+# TODO
+class UploadGraphEncryptKeysOutput(BaseModel):
+    pass
+
+
+@app.post("/upload_graph_encrypt_keys")
+def upload_graph_encrypt_keys(
+    input: UploadGraphEncryptKeysInput,
+) -> UploadGraphEncryptKeysOutput:
+    pass
+
+
+class GetGraphTxidInput(BaseModel):
+    graph_uuid: str = Field(validation_alias="GraphUUID")
+
+
+class GetGraphTxidOutput(BaseModel):
+    txid: TxId
+
+
+@app.post("/get_txid")
+def get_graph_txid(input: GetGraphTxidInput) -> GetGraphTxidOutput:
+    return
+
+
 class ListGraphsOutput(BaseModel):
     graphs: list[SimpleGraph] = Field(serialization_alias="Graphs")
 
@@ -106,6 +200,20 @@ class GetAllFilesOutput(BaseModel):
 
 @app.post("/get_all_files")
 def get_all_files(input: GetAllFilesInput) -> GetAllFilesOutput:
+    return
+
+
+class GetFilesMetaInput(BaseModel):
+    graph_uuid: str = Field(validation_alias="GraphUUID")
+    files: list[FileRemoteId] = Field(validation_alias="Files")
+
+
+class GetFilesMetaOutput(BaseModel):
+    objects: list[FileObject] = Field(serialization_alias="Objects")
+
+
+@app.post("/get_files_meta")
+def get_files_meta(input: GetFilesMetaInput) -> GetFilesMetaOutput:
     return
 
 
@@ -141,6 +249,27 @@ def get_version_files(input: GetVersionFilesInput) -> GetVersionFilesOutput:
     return
 
 
+class GetFileVersionListInput(BaseModel):
+    graph_uuid: str = Field(validation_alias="GraphUUID")
+    files: FileRemoteId = Field(validation_alias="File")
+
+
+class GetFileVersionListOutput(BaseModel):
+    pass
+    # TODO
+
+
+@app.post("/get_file_version_list")
+def get_version_files(input: GetFileVersionListInput) -> GetFileVersionListOutput:
+    return
+
+
+# TODO
+@app.post("/get_deletion_log_v20221212")
+def get_deletion_log_v20221212():
+    pass
+
+
 @app.post("/get_temp_credential")
 def get_temp_credential() -> TempCredential:
     return
@@ -170,7 +299,7 @@ def update_files(input: UpdateFilesInput) -> UpdateFilesOutput:
 class DeleteFilesInput(BaseModel):
     graph_uuid: str = Field(validation_alias="GraphUUID")
     txid: TxId
-    files: list[str] = Field(validation_alias="Files")
+    files: list[FileRemoteId] = Field(validation_alias="Files")
 
 
 class DeleteFilesOutput(BaseModel):
