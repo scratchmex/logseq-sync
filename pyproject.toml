@@ -16,7 +16,12 @@ sqlalchemy = "^2.0.23"
 [tool.poetry.group.dev.dependencies]
 pytest = "^7.4.3"
 httpx = "^0.26.0"
+pytest-cov = "^4.1.0"
 
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
+
+
+[tool.coverage.run]
+branch = true
