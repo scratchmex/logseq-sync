@@ -10,6 +10,7 @@ packages = [{include = "logseq_sync_backend", from = "src"}]
 python = "^3.11"
 fastapi = "^0.105.0"
 uvicorn = {extras = ["standard"], version = "^0.25.0"}
+sqlalchemy = "^2.0.23"
 
 
 [build-system]
