@@ -3,8 +3,8 @@ import hashlib
 import secrets
 from typing import Annotated, Literal
 
-from datetime import datetime, timedelta
-from pydantic import BaseModel, Field, computed_field
+from datetime import datetime, timedelta, timezone
+from pydantic import UUID4, AwareDatetime, BaseModel, Field, computed_field
 
 
 TxId = Annotated[int, Field(serialization_alias="TXId", ge=0)]
@@ -19,21 +19,25 @@ FileRemoteId = Annotated[
 class Graph(BaseModel):
     message: str | None = None
     name: Annotated[str, Field(serialization_alias="GraphName")]
-    uuid: Annotated[str, Field(serialization_alias="GraphUUID")]
+    uuid: Annotated[UUID4, Field(serialization_alias="GraphUUID")]
     txid: TxId
-    storage_usage: Annotated[int, Field(serialization_alias="GraphStorageUsage")]
-    storage_limit: Annotated[int, Field(serialization_alias="GraphStorageLimit")]
+    storage_usage: Annotated[
+        int, Field(serialization_alias="GraphStorageUsage", description="in bytes")
+    ]
+    storage_limit: Annotated[
+        int, Field(serialization_alias="GraphStorageLimit", description="in bytes")
+    ]
 
 
 class SimpleGraph(BaseModel):
     name: Annotated[str, Field(serialization_alias="GraphName")]
-    uuid: Annotated[str, Field(serialization_alias="GraphUUID")]
+    uuid: Annotated[UUID4, Field(serialization_alias="GraphUUID")]
 
 
 class GraphSalt(BaseModel):
     value: Annotated[str, Field(description="64-byte base64 salt")]
     expires_at: Annotated[
-        datetime,
+        AwareDatetime,
         Field(
             serialization_alias="expired-at", description="unix timestamp milliseconds"
         ),
@@ -43,12 +47,12 @@ class GraphSalt(BaseModel):
     def create_random(cls):
         return cls(
             value=base64.b64encode(secrets.token_bytes(64)),
-            expires_at=datetime.utcnow() + timedelta(weeks=8),
+            expires_at=datetime.now(timezone.utc) + timedelta(weeks=8),
         )
 
     @property
     def is_expired(self):
-        return self.expires_at <= datetime.utcnow()
+        return self.expires_at <= datetime.now(timezone.utc)
 
 
 class GraphEncryptKeys(BaseModel):
@@ -94,18 +98,28 @@ class Transaction(BaseModel):
 
 
 class FileObject(BaseModel):
-    key: Annotated[FileRemoteId, Field(serialization_alias="Key")]
-    last_modified: Annotated[datetime, Field(serialization_alias="LastModified")]  # utc
+    blob_path: Annotated[
+        FileRemoteId,
+        Field(
+            serialization_alias="FilePath",
+            description="should be 'user-uuid/graph-uuid/e.encrypted-filename'. "
+            'in files meta it should be "FilePath" and in all files "Key", wtf?',
+        ),
+    ]
+    last_modified: Annotated[
+        AwareDatetime, Field(serialization_alias="LastModified")
+    ]  # utc
     size: Annotated[int, Field(serialization_alias="Size")]
-
-    @computed_field(alias="ETag")
-    @property
-    def etag(self) -> str:
-        digest = hashlib.md5()
-        digest.update(bytes(self.last_modified.isoformat()))
-        digest.update(self.size.to_bytes())
-
-        return f"md5-id-{digest.hexdigest()}"
+    graph_txid: Annotated[
+        TxId, Field(serialization_alias="Txid")
+    ]  # << what is with these names? TXId, Txid, txid ...
+    checksum: Annotated[
+        str,
+        Field(
+            serialization_alias="Checksum",
+            description="md5. in files meta it should be 'Checksum' and in all files 'checksum'",
+        ),
+    ]
 
 
 class FileVersion(BaseModel):
@@ -114,10 +128,10 @@ class FileVersion(BaseModel):
     used to construct FileVersionId like 'file-uuid/version-uuid'
     """
 
-    create_time: Annotated[datetime, Field(serialization_alias="CreateTime")]
+    create_time: Annotated[AwareDatetime, Field(serialization_alias="CreateTime")]
     # ^^ or create-time (which is used in client src code)
-    version_uuid: Annotated[str, Field(serialization_alias="VersionUUID")]
-    file_uuid: Annotated[str, Field(serialization_alias="FileUUID")]
+    version_uuid: Annotated[UUID4, Field(serialization_alias="VersionUUID")]
+    file_uuid: Annotated[UUID4, Field(serialization_alias="FileUUID")]
 
 
 class DeletionLog(BaseModel):
@@ -135,24 +149,35 @@ class DeletionLog(BaseModel):
 
 class Credentials(BaseModel):
     access_key_id: Annotated[str, Field(serialization_alias="AccessKeyId")]
-    expiration: Annotated[datetime, Field(serialization_alias="Expiration")]  # utc
+    expiration: Annotated[AwareDatetime, Field(serialization_alias="Expiration")]  # utc
     secret_key: Annotated[str, Field(serialization_alias="SecretKey")]
     session_token: Annotated[str, Field(serialization_alias="SessionToken")]
 
 
 class TempCredential(BaseModel):
     credentials: Annotated[Credentials, Field(serialization_alias="Credentials")]
-    s3_prefix: Annotated[str, Field(serialization_alias="S3Prefix")]
+    s3_prefix: Annotated[
+        str,
+        Field(
+            serialization_alias="S3Prefix",
+            description="can be 'user-uuid/graph-uuid/tmp-path' ",
+        ),
+    ]
 
 
 class UserInfo(BaseModel):
-    groups: Annotated[list[Literal["pro"]], Field(serialization_alias="UserGroups")]
+    groups: Annotated[
+        list[Literal["pro", "alpha-tester", "beta-tester"]],
+        Field(serialization_alias="UserGroups"),
+    ]
     lemon_status: Annotated[
         Literal["active", "on_trial", "cancelled"],
         Field(serialization_alias="LemonStatus"),
     ]
-    lemon_ends_at: Annotated[datetime, Field(serialization_alias="LemonEndsAt")]
-    lemon_renews_at: Annotated[datetime, Field(serialization_alias="LemonRenewsAt")]
+    lemon_ends_at: Annotated[AwareDatetime, Field(serialization_alias="LemonEndsAt")]
+    lemon_renews_at: Annotated[
+        AwareDatetime, Field(serialization_alias="LemonRenewsAt")
+    ]
     # -- undocumented props
     # ExpireTime: used to check if beta is available
     # ^^ ref: https://github.com/logseq/logseq/blob/981b1ef80f13ff2a88d663307a8cd111eecc2554/src/main/frontend/components/file_sync.cljs#L739
