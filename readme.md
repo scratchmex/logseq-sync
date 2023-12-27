@@ -10,6 +10,8 @@ the backend is in working state with the corresponding changes in rsapi and logs
 
 # dev
 
+dependent on changes in [rsapi](https://github.com/logseq/rsapi/compare/master...scratchmex:rsapi:master) and [logseq](https://github.com/logseq/logseq/compare/master...scratchmex:logseq:master) (click to see changes on my forks)
+
 link the rsapi project with the logseq with
 
 ```
