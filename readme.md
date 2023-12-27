@@ -37,8 +37,11 @@ yarn watch
 yarn dev-electron-app
 ```
 
-and set the local endpoint
+set the local endpoint
 
+<img width="594" alt="image" src="https://github.com/scratchmex/logseq-sync/assets/4014888/05c7f9e7-3e27-4d71-a508-550642d7245d">
+
+and run `make dev` here
 
 # spec
 
