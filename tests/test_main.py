@@ -3,8 +3,8 @@ from fastapi.testclient import TestClient
 import pytest
 
 
-from logseq_sync_backend.main import app
-from logseq_sync_backend import db, types
+from logseq_sync.main import app
+from logseq_sync import db, types
 
 
 @pytest.fixture(autouse=True)

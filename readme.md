@@ -4,6 +4,10 @@ stack: fastapi and sqlalchemy
 
 refer to [bcspragu/logseq-sync](https://github.com/bcspragu/logseq-sync) for other impl and more info (he did the first work and I heavily inspired on it)
 
+# todo
+
+the backend is in working state with the corresponding changes in rsapi and logseq itself. we only need a way to authenticate and actually integrate s3 backend
+
 # dev
 
 link the rsapi project with the logseq with
@@ -32,7 +36,6 @@ yarn dev-electron-app
 ```
 
 and set the local endpoint
-
 
 
 # spec

@@ -1,10 +1,10 @@
 [tool.poetry]
-name = "logseq-sync-backend"
+name = "logseq-sync"
 version = "0.1.0"
 description = ""
 authors = ["Ivan Gonzalez <scratchmex@gmail.com>"]
 readme = "README.md"
-packages = [{include = "logseq_sync_backend", from = "src"}]
+packages = [{include = "logseq_sync", from = "src"}]
 
 [tool.poetry.dependencies]
 python = "^3.11"
