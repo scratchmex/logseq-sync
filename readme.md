@@ -45,8 +45,8 @@ and run `make dev` here
 
 # spec
 
-[logseq/capacitor-file-sync](https://github.com/logseq/capacitor-file-sync) impl for ios (native) and android (wrapper of rsapi)
-[logseq/rsapi](https://github.com/logseq/rsapi) impl for desktop and android
+- [logseq/capacitor-file-sync](https://github.com/logseq/capacitor-file-sync) impl for ios (native) and android (wrapper of rsapi)
+- [logseq/rsapi](https://github.com/logseq/rsapi) impl for desktop and android
 
 TODO architecture diagram
 
